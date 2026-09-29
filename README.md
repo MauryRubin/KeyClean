@@ -10,6 +10,13 @@ The menu bar icon shows the state:
 - **Unlocked:** the `keyboard` symbol, monochrome. Typing works normally.
 - **Locked:** the `lock.fill` symbol, tinted red. Keyboard input is blocked.
 
+## Usage
+
+Click the menu bar icon and choose **Lock Keyboard**; the icon turns into a red
+lock. Wipe the keyboard, then click the icon and choose **Unlock Keyboard**. The
+trackpad always works, and Quit also unlocks. **Launch at Login** is off by
+default; turn it on from the menu (it is only shown while unlocked).
+
 ## Build and install
 
 ```sh
@@ -23,7 +30,8 @@ and the Xcode Command Line Tools.
 
 ## First run
 
-KeyClean needs Accessibility permission to block keys. Grant it in
+KeyClean needs Accessibility permission to block keys. On first launch macOS
+shows its own Accessibility prompt. Grant it in
 System Settings → Privacy & Security → Accessibility. If the lock still fails
 even though KeyClean is enabled there, also enable it under **Input
 Monitoring**.
@@ -32,7 +40,8 @@ Monitoring**.
 
 Because the app is signed ad hoc, macOS may ask for permission again after a
 rebuild. Fix: in that Accessibility list, select the KeyClean entry and remove
-it with the minus button, then run the app and grant it again.
+it with the minus button (do the same for any stale Input Monitoring entry if
+you enabled one), then run the app and grant it again.
 
 ## Running tests
 

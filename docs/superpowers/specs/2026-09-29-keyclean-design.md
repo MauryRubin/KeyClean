@@ -1,7 +1,7 @@
 # KeyClean — PRD & Design Spec
 
 **Date:** 2026-09-29
-**Status:** Draft, awaiting review
+**Status:** Implemented (pending user acceptance checklist, section 8)
 **Target machine:** MacBook Air (M1), macOS 15.6.1, Swift 6.2 Command Line Tools (no full Xcode)
 
 ---
@@ -57,7 +57,7 @@ Quit KeyClean
 ```
 Unlock Keyboard
 ─────────────
-Quit KeyClean   (also unlocks)
+Quit KeyClean (Unlocks Keyboard)
 ```
 
 ### Primary flow
@@ -72,8 +72,8 @@ Quit KeyClean   (also unlocks)
 
 Blocking keys requires macOS **Accessibility** permission.
 
-- On launch, and again when you choose **Lock Keyboard**, the app checks for the permission.
-- If it's missing, the app shows an alert: *"KeyClean needs Accessibility access to block keyboard input while you clean. Grant access in System Settings → Privacy & Security → Accessibility, then try again."* It has two buttons: **Open System Settings** (goes straight to the Accessibility pane) and **Cancel**.
+- On launch, if the permission is missing, macOS shows its own Accessibility prompt (`requestSystemPrompt()`), which also lists KeyClean in the Accessibility pane.
+- When you choose **Lock Keyboard** without the permission, the app shows a custom alert: *"KeyClean needs Accessibility access to block keyboard input while you clean. Grant access in System Settings → Privacy & Security → Accessibility, then try again."* It has two buttons: **Open System Settings** (goes straight to the Accessibility pane) and **Cancel**.
 - Without the permission the lock is **not** started, so the icon never shows "locked" unless keys really are blocked.
 
 ## 4. Functional requirements
@@ -103,8 +103,9 @@ KeyClean/
 ├── Sources/
 │   ├── KeyCleanCore/               # testable logic, no AppKit UI
 │   │   ├── EventFilter.swift       # pure: event type → .block / .pass
+│   │   ├── FilterDecision.swift    # .block / .pass enum
 │   │   ├── LockState.swift         # enum + pure transition rules
-│   │   └── KeyboardLocker.swift    # owns the CGEventTap lifecycle
+│   │   └── KeyboardLocker.swift    # lock/unlock policy over an injected EventTapDriver
 │   └── KeyClean/                   # app shell
 │       ├── main.swift              # NSApplication bootstrap
 │       ├── SystemEventTap.swift    # real CGEventTap (implements EventTapDriver)
@@ -124,7 +125,8 @@ KeyClean/
 ### Components
 
 **`EventFilter`** (pure)
-- `static func decision(for type: CGEventType) -> FilterDecision`. It returns `.block` for keyboard and system-defined events and `.pass` for everything else.
+- `static func decision(for type: CGEventType) -> FilterDecision`. It returns `.block` for keyboard and system-defined events and `.pass` for everything else. `FilterDecision` lives in its own file.
+- `blockedRawValues` is the set of blocked raw event types, `systemDefinedRawValue` is 14, and `isTapDisabled(_:)` recognizes the two tap-disabled event types.
 - It has no side effects and is fully unit-tested.
 
 **`LockState`** (pure)
@@ -132,34 +134,43 @@ KeyClean/
 - Transition helpers that return a new state (they never change existing state), plus the menu text and icon name for each state.
 
 **`KeyboardLocker`**
-- Owns lock/unlock policy: `lock()` throws `.permissionDenied` if not trusted and `.tapCreationFailed` if the injected `EventTapDriver` can't install. `isLocked` reads `driver.isInstalled`. The real `CGEventTap` lives in `SystemEventTap` (app target); it builds its mask from `EventFilter.blockedRawValues`, drops blocked events, and re-enables itself on tap-disabled events.
+- `lock()` returns early if the driver is already installed. Otherwise it throws `.permissionDenied` (via the injected `isTrusted`) or `.tapCreationFailed` (the driver refused).
+- `unlock()` does nothing unless the driver is installed. `isLocked` reads `driver.isInstalled`.
 
 **`SystemEventTap`**
-- Owns lock/unlock policy: `lock()` throws `.permissionDenied` if not trusted and `.tapCreationFailed` if the injected `EventTapDriver` can't install. `isLocked` reads `driver.isInstalled`. The real `CGEventTap` lives in `SystemEventTap` (app target); it builds its mask from `EventFilter.blockedRawValues`, drops blocked events, and re-enables itself on tap-disabled events.
+- Implements `EventTapDriver`. `install()` creates a `cgSessionEventTap` / `headInsertEventTap` / `.defaultTap` with the mask built from `EventFilter.blockedRawValues`, and adds the run-loop source to the main run loop in common modes.
+- The callback drops `.block` events and re-enables the tap on tapDisabled events.
+- `uninstall()` disables the tap, removes the source and invalidates the port. `isInstalled` is `tap != nil`.
+- `userInfo` is an unretained `self`, safe only because the driver lives for the whole process (owned by `KeyboardLocker`, held by the global app delegate).
 
 **`StatusMenuController`**
-- Owns the `NSStatusItem` and rebuilds the menu and icon from the current `LockState`.
-- Calls `KeyboardLocker` and `PermissionManager`. It holds no blocking logic of its own.
+- Owns the `NSStatusItem` and rebuilds the menu and icon from the current `LockState`, which it derives from `locker.isLocked`.
+- Calls `KeyboardLocker`, `PermissionManager` (only to show the permission alert) and `LoginItemManager`. It does not check permission itself and holds no blocking logic.
 
 **`PermissionManager`**
-- `isTrusted` wraps `AXIsProcessTrusted()`. `requestIfNeeded()` shows the alert and opens `x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility`.
+- `isTrusted` wraps `AXIsProcessTrusted()`.
+- `requestSystemPrompt()` calls `AXIsProcessTrustedWithOptions` with the prompt option. It runs on launch when untrusted.
+- `presentPermissionAlert()` shows the custom alert and deep-links to `x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility`. It runs when Lock fails with `.permissionDenied`.
 
 **`LoginItemManager`**
 - `isEnabled` comes from `SMAppService.mainApp.status == .enabled`, and `setEnabled(_:) throws` registers or unregisters the app.
 
 **`AppDelegate`**
-- `applicationWillTerminate` calls `keyboardLocker.unlock()` (the safety net for F8).
+- Wires `PermissionManager`, `KeyboardLocker(driver: SystemEventTap())`, `StatusMenuController` and `LoginItemManager`. On launch, if untrusted, it calls `requestSystemPrompt()`.
+- `applicationWillTerminate` calls `locker?.unlock()` (the safety net for F8).
+- `main.swift` keeps the delegate as a top-level global because `NSApp.delegate` is weak, and sets the activation policy to `.accessory`.
 
 ### Data flow
 
 ```
-Menu click ─▶ StatusMenuController ─▶ PermissionManager.isTrusted?
-                     │                     └─ no ─▶ alert, stay unlocked
-                     ▼ yes
-              KeyboardLocker.lock() ─▶ CGEventTap(callback → EventFilter)
-                     │
-                     ▼
-              new LockState(.locked) ─▶ re-render icon + menu
+Menu click ─▶ StatusMenuController ─▶ KeyboardLocker.lock()
+                                          │
+                                          ├─ isTrusted? no ─▶ throws .permissionDenied ─▶ permission alert, stay unlocked
+                                          ▼ yes
+                                      driver.install() ─▶ SystemEventTap / CGEventTap(callback → EventFilter)
+                                          │
+                                          ▼
+              render() from locker.isLocked ─▶ re-render icon + menu
 ```
 
 ## 6. Error handling
@@ -167,7 +178,7 @@ Menu click ─▶ StatusMenuController ─▶ PermissionManager.isTrusted?
 | Situation | Behavior |
 |-----------|----------|
 | Accessibility not granted | Stay unlocked, show the permission alert with **Open System Settings** |
-| `tapCreate` returns nil despite permission | Stay unlocked, show *"Couldn't lock the keyboard (system refused the event tap). Try quitting and reopening KeyClean."* and log details with `os.Logger` |
+| `tapCreate` returns nil despite permission | Stay unlocked, show an alert titled *"Couldn't lock the keyboard"* with the message *"The system refused the event tap. Try quitting and reopening KeyClean."* and log details with `os.Logger` |
 | macOS disables the tap mid-lock | Re-enable it in the callback and log it |
 | Launch at Login register/unregister fails | Show an alert with the system's error message, and keep the checkmark matching the real status |
 | App quits or crashes while locked | On quit: `applicationWillTerminate` unlocks. On a crash: the tap belongs to the process, so macOS removes it when the process dies and the keyboard comes back |
@@ -201,6 +212,7 @@ Logging uses `os.Logger` (subsystem `com.sydneymalek.KeyClean`) and can be viewe
 - [ ] While locked: the trackpad moves and clicks normally
 - [ ] Unlock → typing works right away
 - [ ] Quit while locked → typing works
+- [ ] While locked, engage the screen lock (e.g. Ctrl-Cmd-Q); confirm the login password field / Touch ID still work, then unlock KeyClean
 - [ ] Turn on Launch at Login → restart → the icon is present and unlocked
 - [ ] Turn off Launch at Login → restart → the app doesn't launch
 
