@@ -21,7 +21,9 @@ final class StatusMenuController: NSObject {
 
     private func render() {
         let state = currentState
-        statusItem.button?.image = makeIcon(for: state)
+        let icon = makeIcon(for: state)
+        statusItem.button?.image = icon
+        statusItem.button?.title = icon == nil ? (state == .locked ? "🔒" : "⌨") : ""
         statusItem.menu = makeMenu(for: state)
     }
 

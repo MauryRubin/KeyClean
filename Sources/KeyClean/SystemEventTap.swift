@@ -12,6 +12,8 @@ final class SystemEventTap: EventTapDriver {
 
     var isInstalled: Bool { tap != nil }
 
+    deinit { uninstall() }
+
     func install() -> Bool {
         guard tap == nil else { return true }
 
@@ -57,7 +59,12 @@ final class SystemEventTap: EventTapDriver {
     fileprivate func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if EventFilter.isTapDisabled(type) {
             Self.log.error("Tap disabled by system (type \(type.rawValue)); re-enabling")
-            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            if let tap {
+                CGEvent.tapEnable(tap: tap, enable: true)
+                if !CGEvent.tapIsEnabled(tap: tap) {
+                    Self.log.error("Re-enabling tap failed")
+                }
+            }
             return Unmanaged.passUnretained(event)
         }
         switch EventFilter.decision(for: type) {
