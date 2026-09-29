@@ -107,6 +107,8 @@ KeyClean/
 │   │   └── KeyboardLocker.swift    # owns the CGEventTap lifecycle
 │   └── KeyClean/                   # app shell
 │       ├── main.swift              # NSApplication bootstrap
+│       ├── SystemEventTap.swift    # real CGEventTap (implements EventTapDriver)
+│       ├── Alerts.swift            # generic error alert
 │       ├── AppDelegate.swift       # wires components, handles terminate
 │       ├── StatusMenuController.swift  # icon + menu, renders LockState
 │       ├── PermissionManager.swift # AX trust check + alert + open Settings
@@ -130,10 +132,10 @@ KeyClean/
 - Transition helpers that return a new state (they never change existing state), plus the menu text and icon name for each state.
 
 **`KeyboardLocker`**
-- `func lock() throws(LockError)` creates the tap with `CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, ...)`, adds it to the main run loop, and enables it.
-- `func unlock()` disables the tap, removes the run loop source, and releases both.
-- The tap callback asks `EventFilter` what to do: it returns `nil` to drop an event and returns the event unchanged to let it through. When it receives a tap-disabled event, it re-enables the tap.
-- It exposes `isLocked` from the real tap state. `LockError` has the cases `.permissionDenied` and `.tapCreationFailed`.
+- Owns lock/unlock policy: `lock()` throws `.permissionDenied` if not trusted and `.tapCreationFailed` if the injected `EventTapDriver` can't install. `isLocked` reads `driver.isInstalled`. The real `CGEventTap` lives in `SystemEventTap` (app target); it builds its mask from `EventFilter.blockedRawValues`, drops blocked events, and re-enables itself on tap-disabled events.
+
+**`SystemEventTap`**
+- Owns lock/unlock policy: `lock()` throws `.permissionDenied` if not trusted and `.tapCreationFailed` if the injected `EventTapDriver` can't install. `isLocked` reads `driver.isInstalled`. The real `CGEventTap` lives in `SystemEventTap` (app target); it builds its mask from `EventFilter.blockedRawValues`, drops blocked events, and re-enables itself on tap-disabled events.
 
 **`StatusMenuController`**
 - Owns the `NSStatusItem` and rebuilds the menu and icon from the current `LockState`.

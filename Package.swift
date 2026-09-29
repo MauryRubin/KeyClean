@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v13)],
     targets: [
         .target(name: "KeyCleanCore"),
+        .executableTarget(name: "KeyClean", dependencies: ["KeyCleanCore"]),
         .testTarget(name: "KeyCleanCoreTests", dependencies: ["KeyCleanCore"]),
     ]
 )
